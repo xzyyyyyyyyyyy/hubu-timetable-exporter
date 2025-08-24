@@ -1,0 +1,16 @@
+# VSCode
+.vscode/
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+# Jupyter
+.ipynb_checkpoints/
+# Data/Export
+全部课表导出/
+采集失败列表.csv
+*.xlsx
+# System
+.DS_Store
+Thumbs.db
