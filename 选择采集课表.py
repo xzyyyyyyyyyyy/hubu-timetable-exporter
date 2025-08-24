@@ -53,40 +53,38 @@ def get_kb_html(session, xnxq01id, kbjcmsid, yxbh, rxnf, zy, bjbh, xx04mc):
     resp = session.post(KB_URL, headers=headers, data=data)
     return resp.text
 
-def extract_course_info(cell_div):
-    course_name = teacher = room = weeks = ""
-    if cell_div is None:
-        return "", "", "", ""
-    fonts = cell_div.find_all("font")
-    for f in fonts:
-        t = f.get_text(separator="", strip=True)
-        if t and "------------------------------" not in t and "课程编号" not in t and "方式" not in t:
-            course_name = t
-            break
-    teacher_font = cell_div.find('font', {'title': '老师'})
-    if teacher_font:
-        teacher = teacher_font.get_text(strip=True)
-    room_font = cell_div.find('font', {'title': '教室'})
-    if room_font:
-        room = room_font.get_text(strip=True)
-    weeks_font = cell_div.find('font', {'title': '周次(节次)'})
-    if weeks_font:
-        weeks = weeks_font.get_text(strip=True)
-    if not weeks:
-        for f in fonts:
-            if f.has_attr("title") and "节" in f["title"]:
-                weeks = f["title"]
-                break
-    return course_name, teacher, room, weeks
 
 def extract_full_cell(td):
-    """提取一个td中所有kbcontent/kbcontent1的全部内容（包括隐藏的）"""
+    """提取一个td中所有kbcontent/kbcontent1的全部内容（包括隐藏的），结构化输出课程名/老师/教室/周次"""
     cell_texts = []
     divs = td.find_all(lambda tag: tag.name == "div" and tag.get("class", [""])[0].startswith("kbcontent"))
     for div in divs:
-        raw_txt = div.get_text(separator="\n", strip=True)
-        if raw_txt:
-            cell_texts.append(raw_txt)
+        # 结构化提取
+        course_name = teacher = room = weeks = ""
+        fonts = div.find_all("font")
+        for f in fonts:
+            t = f.get_text(separator="", strip=True)
+            if t and "------------------------------" not in t and "课程编号" not in t and "方式" not in t:
+                course_name = t
+                break
+        teacher_font = div.find('font', {'title': '老师'})
+        if teacher_font:
+            teacher = teacher_font.get_text(strip=True)
+        room_font = div.find('font', {'title': '教室'})
+        if room_font:
+            room = room_font.get_text(strip=True)
+        weeks_font = div.find('font', {'title': '周次(节次)'})
+        if weeks_font:
+            weeks = weeks_font.get_text(strip=True)
+        if not weeks:
+            for f in fonts:
+                if f.has_attr("title") and "节" in f["title"]:
+                    weeks = f["title"]
+                    break
+        # 合并输出
+        info = " / ".join([x for x in [course_name, teacher, room, weeks] if x])
+        if info:
+            cell_texts.append(info)
     return "\n\n".join(cell_texts) if cell_texts else ""
 
 def parse_kb_to_matrix(html):
@@ -116,6 +114,25 @@ def export_matrix_to_excel(days, matrix, filename):
     ws.append(["节次"] + days)
     for row in matrix:
         ws.append(row)
+    # 自动调整列宽
+    for col in ws.columns:
+        max_length = 0
+        col_letter = col[0].column_letter
+        for cell in col:
+            try:
+                if cell.value:
+                    max_length = max(max_length, len(str(cell.value)))
+            except Exception:
+                pass
+        ws.column_dimensions[col_letter].width = max(10, min(max_length + 2, 50))
+    # 自动调整行高
+    for row in ws.iter_rows():
+        max_lines = 1
+        for cell in row:
+            if cell.value:
+                lines = str(cell.value).count("\n") + 1
+                max_lines = max(max_lines, lines)
+        ws.row_dimensions[cell.row].height = max(15, min(max_lines * 15, 120))
     wb.save(filename)
 
 
