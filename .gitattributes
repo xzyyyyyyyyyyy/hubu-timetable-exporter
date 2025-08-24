@@ -1,0 +1,6 @@
+*.py linguist-language=Python
+*.html linguist-vendored
+*.htm linguist-vendored
+*.xlsx linguist-vendored
+全部课表导出/* linguist-vendored
+采集失败列表.csv linguist-vendored
