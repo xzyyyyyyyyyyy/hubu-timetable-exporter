@@ -1,5 +1,5 @@
 xnxq01id_list = [
-    "2025-2026-1", "2024-2025-2", "2024-2025-1", "2023-2024-2", "2023-2024-1",
+    "2025-2026-1", "2024-2025-2", "2024-2025-1", "2023-2024-2", "2023-2024-1", "2022-2023-2", "2022-2023-1",
 ]
 kbjcmsid_list = [
     ("04185F9CDDC04BC2AF96C38D2B31EB68", "长江新区校区作息时间"),
@@ -82,22 +82,18 @@ def extract_course_info(cell_div):
 def extract_full_cell(td):
     """提取一个td中所有kbcontent/kbcontent1的全部内容（包括隐藏的）"""
     cell_texts = []
-    # 收集所有div（不论隐藏与否）
     divs = td.find_all(lambda tag: tag.name == "div" and tag.get("class", [""])[0].startswith("kbcontent"))
     for div in divs:
-        # 用html内容还是用text看你需求，这里建议保留格式用text
-        # 直接取div的全部内容，包括font、p等
         raw_txt = div.get_text(separator="\n", strip=True)
         if raw_txt:
             cell_texts.append(raw_txt)
-    # 有些单元格其实所有div都空，直接返回空字符串
     return "\n\n".join(cell_texts) if cell_texts else ""
 
 def parse_kb_to_matrix(html):
     soup = BeautifulSoup(html, "html.parser")
     table = soup.find("table", {"id": "kbtable"})
     if table is None:
-        raise Exception("未找到课表table")
+        raise ValueError("未找到课表table")
     ths = table.find_all("tr")[0].find_all("th")
     days = [th.get_text(strip=True) for th in ths[1:]]
     matrix = []
@@ -135,7 +131,6 @@ def main():
             # 统一去除key的BOM和空白
             row = {k.strip().replace('\ufeff',''): v for k, v in r.items()}
             rows.append(row)
-    # 交互式选择
     # 院系
     yx_list = []
     yx_seen = set()

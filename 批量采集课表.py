@@ -1,7 +1,17 @@
+
 import requests
 import openpyxl
 from bs4 import BeautifulSoup
 import csv
+
+# 可选学年学期和校区列表
+xnxq01id_list = [
+    "2025-2026-1", "2024-2025-2", "2024-2025-1", "2023-2024-2", "2023-2024-1",
+]
+kbjcmsid_list = [
+    ("04185F9CDDC04BC2AF96C38D2B31EB68", "长江新区校区作息时间"),
+    ("952E3FC5FF563C09E053459072CA5D79", "武昌校区作息时间")
+]
 
 def get_jsessionid():
     print("请在浏览器登录教务系统并进入课表查询界面，按F12打开开发者工具，切换到Application/存储/Storage->Cookies，找到JSESSIONID（路径为根目录），复制其值并粘贴到下方：")
@@ -45,7 +55,7 @@ def parse_kb_to_matrix(html):
     soup = BeautifulSoup(html, "html.parser")
     table = soup.find("table", {"id": "kbtable"})
     if table is None:
-        raise Exception("未找到课表table")
+        raise ValueError("未找到课表table")
     ths = table.find_all("tr")[0].find_all("th")
     days = [th.get_text(strip=True) for th in ths[1:]]
     matrix = []
@@ -86,30 +96,35 @@ def main():
     import os
     root_dir = "全部课表导出"
     for row in rows:
-        try:
-            html = get_kb_html(
-                session,
-                row.get('xnxq01id', ''),
-                row.get('kbjcmsid', ''),
-                row['yxbh'],
-                row['rxnf'],
-                row['zy'],
-                row['bjbh'],
-                row['班级']
-            )
-            days, matrix = parse_kb_to_matrix(html)
-            # 总文件夹/专业/年级/
-            zy = row.get('专业', row.get('zy', '未知专业'))
-            nj = row.get('年级', row.get('rxnf', '未知年级'))
-            dir_path = os.path.join(root_dir, zy, nj)
-            os.makedirs(dir_path, exist_ok=True)
-            fname = f"{row['班级']}_{nj}_{row.get('xnxq01id','')}.xlsx".replace("/", "_").replace("[", "").replace("]", "").replace(" ", "")
-            file_path = os.path.join(dir_path, fname)
-            export_matrix_to_excel(days, matrix, file_path)
-            print(f"已保存: {file_path}")
-        except Exception as e:
-            print(f"采集失败: {row['班级']} {row.get('年级', row.get('rxnf',''))} {row.get('xnxq01id','')}，原因: {e}")
-            fail_list.append(row)
+        zy = row.get('专业', row.get('zy', '未知专业'))
+        nj = row.get('年级', row.get('rxnf', '未知年级'))
+        for xnxq01id in xnxq01id_list:
+            for kbjcmsid, kbjc_desc in kbjcmsid_list:
+                try:
+                    html = get_kb_html(
+                        session,
+                        xnxq01id,
+                        kbjcmsid,
+                        row['yxbh'],
+                        row['rxnf'],
+                        row['zy'],
+                        row['bjbh'],
+                        row['班级']
+                    )
+                    days, matrix = parse_kb_to_matrix(html)
+                    dir_path = os.path.join(root_dir, zy, nj)
+                    os.makedirs(dir_path, exist_ok=True)
+                    fname = f"{row['班级']}_{nj}_{xnxq01id}_{kbjc_desc}.xlsx".replace("/", "_").replace("[", "").replace("]", "").replace(" ", "")
+                    file_path = os.path.join(dir_path, fname)
+                    export_matrix_to_excel(days, matrix, file_path)
+                    print(f"已保存: {file_path}")
+                except Exception as e:
+                    print(f"采集失败: {row['班级']} {nj} {xnxq01id} {kbjc_desc}，原因: {e}")
+                    fail_row = row.copy()
+                    fail_row['xnxq01id'] = xnxq01id
+                    fail_row['kbjcmsid'] = kbjcmsid
+                    fail_row['kbjc_desc'] = kbjc_desc
+                    fail_list.append(fail_row)
     print(f"全部完成，失败数量: {len(fail_list)}")
     if fail_list:
         with open("采集失败列表.csv", "w", encoding="utf-8-sig", newline="") as fout:
