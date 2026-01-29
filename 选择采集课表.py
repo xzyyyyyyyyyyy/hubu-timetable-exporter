@@ -1,5 +1,5 @@
 xnxq01id_list = [
-    "2025-2026-1", "2024-2025-2", "2024-2025-1", "2023-2024-2", "2023-2024-1", "2022-2023-2", "2022-2023-1",
+    "2025-2026-2", "2025-2026-1", "2024-2025-2", "2024-2025-1", "2023-2024-2", "2023-2024-1", "2022-2023-2", "2022-2023-1",
 ]
 kbjcmsid_list = [
     ("04185F9CDDC04BC2AF96C38D2B31EB68", "长江新区校区作息时间"),
@@ -7,8 +7,11 @@ kbjcmsid_list = [
 ]
 import requests
 import openpyxl
+from openpyxl.styles import Alignment
 from bs4 import BeautifulSoup
 import csv
+import webbrowser
+from app_paths import resolve_input_path, resolve_output_path
 
 def choose_from_list(options, label, key='name'):
     print(f"请选择{label}：")
@@ -25,7 +28,8 @@ def choose_from_list(options, label, key='name'):
 
 
 def get_jsessionid():
-    print("请在浏览器登录教务系统并进入课表查询界面，按F12打开开发者工具，切换到Application/存储/Storage->Cookies，找到JSESSIONID（路径为根目录），复制其值并粘贴到下方：")
+    webbrowser.open("https://jwxt.hubu.edu.cn/jsxsd/framework/xsMain.jsp")
+    print("已为你打开教务系统页面。登录后进入课表查询界面，按F12打开开发者工具，切换到Application/存储/Storage->Cookies，找到JSESSIONID（路径为根目录），复制其值并粘贴到下方：")
     return input("请输入JSESSIONID: ").strip()
 
 BASE_URL = "https://jwxt.hubu.edu.cn"
@@ -49,49 +53,111 @@ def get_kb_html(session, xnxq01id, kbjcmsid, yxbh, rxnf, zy, bjbh, xx04mc):
     }
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36 Edg/139.0.0.0',
+        'Referer': KB_URL,
+        'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
     }
     resp = session.post(KB_URL, headers=headers, data=data)
     return resp.text
 
 
+def _looks_like_teacher(line: str) -> bool:
+    if 1 <= len(line) <= 4 and all("\u4e00" <= ch <= "\u9fff" for ch in line):
+        return True
+    return False
+
+
+def _normalize_course_text(raw_text: str) -> str:
+    lines = [line.strip() for line in raw_text.splitlines()]
+    blocks = []
+    current = []
+    for line in lines:
+        if not line:
+            continue
+        if "----" in line:
+            if current:
+                blocks.append(current)
+                current = []
+            continue
+        current.append(line)
+    if current:
+        blocks.append(current)
+
+    cleaned_blocks = []
+    for block in blocks:
+        course_name = ""
+        teacher = ""
+        classroom = ""
+        hours = ""
+        exam_type = ""
+        for line in block:
+            if not line:
+                continue
+            if line in {"★", "●"}:
+                continue
+            if line.startswith("【") and line.endswith("】"):
+                continue
+            if "节" in line and "周" in line:
+                continue
+            if "班" in line:
+                continue
+            if line in {"考试", "考查"}:
+                exam_type = line
+                continue
+            if "总学时" in line:
+                hours = line.replace("总学时：", "学时:").replace("总学时:", "学时:")
+                continue
+            if line.startswith("(") and line.endswith(")") and any(k in line for k in ["讲课", "实验", "实践"]):
+                if not hours:
+                    hours = "学时:" + line.strip("()")
+                continue
+            if not course_name and "教室" not in line and "实验室" not in line and not line.isalnum():
+                course_name = line
+                continue
+            if not teacher and _looks_like_teacher(line):
+                teacher = line
+                continue
+            if not classroom and ("教室" in line or "实验室" in line) and not line.startswith("【"):
+                classroom = line
+                continue
+
+        parts = [course_name, hours, classroom, teacher, exam_type]
+        cleaned = " / ".join([p for p in parts if p])
+        if cleaned:
+            cleaned_blocks.append(cleaned)
+
+    return "\n".join(cleaned_blocks)
+
+
 def extract_full_cell(td):
-    """提取一个td中所有kbcontent/kbcontent1的全部内容（包括隐藏的），结构化输出课程名/老师/教室/周次"""
+    """提取一个td中所有kbcontent/kbcontent1的全部内容（包括隐藏的），保留多段课程"""
     cell_texts = []
     divs = td.find_all(lambda tag: tag.name == "div" and tag.get("class", [""])[0].startswith("kbcontent"))
     for div in divs:
-        # 结构化提取
-        course_name = teacher = room = weeks = ""
-        fonts = div.find_all("font")
-        for f in fonts:
-            t = f.get_text(separator="", strip=True)
-            if t and "------------------------------" not in t and "课程编号" not in t and "方式" not in t:
-                course_name = t
-                break
-        teacher_font = div.find('font', {'title': '老师'})
-        if teacher_font:
-            teacher = teacher_font.get_text(strip=True)
-        room_font = div.find('font', {'title': '教室'})
-        if room_font:
-            room = room_font.get_text(strip=True)
-        weeks_font = div.find('font', {'title': '周次(节次)'})
-        if weeks_font:
-            weeks = weeks_font.get_text(strip=True)
-        if not weeks:
-            for f in fonts:
-                if f.has_attr("title") and "节" in f["title"]:
-                    weeks = f["title"]
-                    break
-        # 合并输出
-        info = " / ".join([x for x in [course_name, teacher, room, weeks] if x])
-        if info:
-            cell_texts.append(info)
-    return "\n\n".join(cell_texts) if cell_texts else ""
+        raw_txt = div.get_text(separator="\n", strip=True)
+        if raw_txt:
+            normalized = _normalize_course_text(raw_txt)
+            if normalized:
+                cell_texts.append(normalized)
+    return "\n".join(cell_texts) if cell_texts else ""
 
 def parse_kb_to_matrix(html):
     soup = BeautifulSoup(html, "html.parser")
     table = soup.find("table", {"id": "kbtable"})
     if table is None:
-        raise ValueError("未找到课表table")
+        # 识别常见未登录/无数据页面
+        text = soup.get_text(separator="", strip=True)
+        if any(k in text for k in ["登录", "统一身份认证", "用户名", "密码", "验证码"]):
+            raise ValueError("未找到课表table：很可能未登录或会话已失效，请重新获取JSESSIONID")
+        if any(k in text for k in ["暂无数据", "没有课表", "未查询到"]):
+            raise ValueError("未找到课表table：该班级在所选学期/校区下无课表")
+        # 保存调试HTML，便于排查
+        try:
+            with open("kb_debug.html", "w", encoding="utf-8") as f:
+                f.write(html)
+        except Exception:
+            pass
+        raise ValueError("未找到课表table，已保存调试页面到 kb_debug.html")
     ths = table.find_all("tr")[0].find_all("th")
     days = [th.get_text(strip=True) for th in ths[1:]]
     matrix = []
@@ -114,6 +180,9 @@ def export_matrix_to_excel(days, matrix, filename):
     ws.append(["节次"] + days)
     for row in matrix:
         ws.append(row)
+    for row in ws.iter_rows():
+        for cell in row:
+            cell.alignment = Alignment(wrap_text=True, vertical="top")
     # 自动调整列宽
     for col in ws.columns:
         max_length = 0
@@ -141,7 +210,8 @@ def main():
     session = requests.Session()
     session.cookies.update({'JSESSIONID': jsessionid})
     # 读取参数csv
-    with open("筛选的课表参数.csv", encoding="utf-8-sig") as f:
+    input_csv = resolve_input_path("筛选的课表参数.csv")
+    with open(input_csv, encoding="utf-8-sig") as f:
         reader = csv.DictReader(f)
         rows = []
         for r in reader:
@@ -196,8 +266,9 @@ def main():
         html = get_kb_html(session, xnxq['name'], kbjc['name'], param_row['yxbh'], param_row['rxnf'], param_row['zy'], param_row['bjbh'], param_row['班级'])
         days, matrix = parse_kb_to_matrix(html)
         fname = f"{param_row['班级']}_{param_row['rxnf']}_{xnxq['name']}.xlsx".replace("/", "_").replace("[", "").replace("]", "").replace(" ", "")
-        export_matrix_to_excel(days, matrix, fname)
-        print(f"已保存: {fname}")
+        output_path = resolve_output_path(fname)
+        export_matrix_to_excel(days, matrix, output_path)
+        print(f"已保存: {output_path}")
     except Exception as e:
         print(f"采集失败: {e}")
 
